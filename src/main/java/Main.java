@@ -1,43 +1,165 @@
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
-import java.net.InetAddress;
 import java.net.SocketException;
 
+/*
+ * RFC3550 - RTP
+ * RFC3551 - RTP Profile for Audio and Video Conferences with Minimal Control
+ * RFC2520 - RTP Payload Format for MPEG1/MPEG2 Video
+ * MPA denotes MPEG-1 or MPEG-2 audio encapsulated as elementary
+   streams.  The encoding is defined in ISO standards ISO/IEC 11172-3
+   and 13818-3.  The encapsulation is specified in RFC 2250 [14].
+ */
 public class Main implements Runnable {
 	private DatagramSocket socket;
 
 	public Main(int port) throws SocketException {
 		System.err.println("Starting UDP server at " + port);
 		socket = new DatagramSocket(port);
-		
+
 		new Thread(this).start();
 	}
 
-	static long u(byte... bytes) {
-		long value = 0;
-		for(byte b : bytes) {
-			value <<= 8;
-			value += Byte.toUnsignedInt(b);
-		}
-		return value;
-	}
-	
-	private static int PACKAGE_SIZE_RTP = 12;
-	
 	public void run() {
-		
+
 		byte[] buf;;
 
 		while(true) {
 			try {
-				
+
+				DatagramPacket packet = new DatagramPacket(buf = new byte[1328], 1328);
+				socket.receive(packet);				
+				Utils.printPacket(packet);
+
+				//Utils.printBuffer(buf, 0, 12);
+				printRTPPHeader(buf);
+			}
+			catch(IOException ie) {
+				System.err.println(ie);
+			}
+			catch(OutOfSyncException ie) {
+				System.err.println(ie);
+				System.exit(0);;
+			}
+		}
+		//socket.close();
+	}
+
+	private void printRTPPHeader(byte[] buf) throws OutOfSyncException {
+		// Known packet?
+		if(Utils.u(buf[0]) != 0x80) {
+			throw new OutOfSyncException("Did not find 0x80 in RTP");
+		}
+
+		// Know type
+		if(Utils.u(buf[1]) != 0x21) {
+			throw new OutOfSyncException("Did not find MPEG2 type in RTP");
+		}
+
+		String        sequence =  Utils.ux(buf[2], buf[3]);
+		String       timestamp =  Utils.ux(buf[4], buf[5], buf[6], buf[7]);
+		String synchronization = Utils.ux(buf[8], buf[9], buf[10], buf[11]);
+
+		System.out.println("+ RTP {" + 
+				"type:" +            "MPEG2" + "," +
+				"sequence:" +        sequence + "," +
+				"timestamp:" +       timestamp + "," +
+				"synchronization:" + synchronization +
+				"}");
+
+		/*
+		 * Packet
+		 */
+		for(int i = 0; i < 7; i++) {
+			//Utils.printBuffer(buf, 12+i*188, 4);
+			printTransportPacket(buf, 12+i*188);
+		}
+		
+		throw new OutOfSyncException("END OF PACKAGE");
+	}
+
+	private void printTransportPacket(byte[] buf, int start) throws OutOfSyncException {
+		if(Utils.u(buf[0 + start]) != 0x47) {
+			throw new OutOfSyncException("Did not find 0x47 in TS");		
+		}
+
+		String pid = Utils.ux(buf[2 + start]);
+		long  cc = 0xf & Utils.u(buf[3 + start]);
+
+		System.out.println("  + TS {" +
+				"pid:" + pid + "," + 
+				"cc:" +  cc + 
+				"}");
+
+		long id = Utils.u(buf[2 + start]);
+		
+		switch((int)id) {
+		case 0: System.out.println("MPEG2 PAT"); break;
+		case 1: System.out.println("MPEG2 CAT"); break;
+		
+		default: {
+			int  length = (int) Utils.u(buf[4 + start]);
+			System.out.println("length=" + length);
+			//Utils.printBuffer(buf, start + 4, 184);
+			//printPESPacket(buf, start + 4);
+		}
+		
+		
+	
+		}
+	}
+
+	private void printPESPacket(byte[] buf, int start) throws OutOfSyncException {		
+		String packetstart = Utils.ux(buf[start], buf[start+1], buf[start+2]);
+		String          id = Utils.ux(buf[start + 3]);
+		String      length = Utils.ux(buf[start + 4], buf[start + 5]);
+		String         ten = Utils.ux(buf[start + 6], buf[start + 7]);
+
+		System.out.println("    + PES{" +
+				"packetstart:" + packetstart + "," + 
+				"id:" + id + "," + 
+				"length:" + length + "," + 
+				"ten:" + ten + 
+				"}");
+		System.out.println();
+	}
+
+	public static void main(String[] args) throws SocketException {
+		new Main(5004);
+	}
+}
+
+
+/*
+ * import java.io.IOException;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.net.SocketException;
+public class Main implements Runnable {
+	private DatagramSocket socket;
+
+	public Main(int port) throws SocketException {
+		System.err.println("Starting UDP server at " + port);
+		socket = new DatagramSocket(port);
+
+		new Thread(this).start();
+	}
+
+	public void run() {
+
+		byte[] buf;;
+
+		while(true) {
+			try {
+
 				DatagramPacket packet = new DatagramPacket(buf = new byte[1328], 1328);
 				socket.receive(packet);				
 				printPacket(packet);
-				
+
 				printBuffer(buf, 0, 12);
-				printRTPPacket(buf);
+				printRTPPHeader(buf);
 
 			}
 			catch(IOException ie) {
@@ -50,7 +172,7 @@ public class Main implements Runnable {
 		}
 		//socket.close();
 	}
-	
+
 	private void printPacket(DatagramPacket packet) {
 		InetAddress address = packet.getAddress();
 		int port = packet.getPort();
@@ -59,7 +181,7 @@ public class Main implements Runnable {
 
 	private void printBuffer(byte buf[], int start, int length) {
 		for(int i = start; i < start+length; i++) {
-			
+
 			System.out.print(" " + String.format("0x%02X", buf[i]));
 			if((i+1) % 16 == 0) {
 				System.out.println();
@@ -68,88 +190,90 @@ public class Main implements Runnable {
 		System.out.println();
 		System.out.println();
 	}
-	
-	private void printRTPPacket(byte[] buf) throws OutOfSyncException {
-		System.out.println("======= RTP =======");
-		if(u(buf[0]) == 0x80) System.out.println("Found: RTP RFC1889v2");
-		switch( (int)u(buf[1]) ) {
-		case 0x00: System.out.println("Found: RTP PCM 64 kps");;
-		case 0x03: System.out.println("Found: RTP GSM 13 kps");;
-		case 0x07: System.out.println("Found: RTP LPC 2.4 kps");;
-		case 0x1F: System.out.println("Found: RTP H.261");;
-		case 0x21: System.out.println("Found: RTP MPEG2");;
-		}		
-		System.out.println("Found: RTP sequence " + u(buf[2], buf[3]));
-		System.out.println("Found: RTP timestamp " + u(buf[4], buf[5], buf[6], buf[7]));
-		System.out.println("Found: RTP synchronization " + u(buf[8], buf[9], buf[10], buf[11]));
 
-		System.out.println();
-	
-		/*
-		 * Packet
-		 */
+	private void printRTPPHeader(byte[] buf) throws OutOfSyncException {
+		// Known packet?
+		if(Utils.u(buf[0]) != 0x80) {
+			throw new OutOfSyncException("Did not find 0x80 in RTP");
+		}
+
+		// Know type
+		if(Utils.u(buf[1]) != 0x21) {
+			throw new OutOfSyncException("Did not find MPEG2 type in RTP");
+		}
+
+		String type = "unknown";
+
+		switch( (int)Utils.u(buf[1]) ) {
+		case 0x00: type ="PCM 64 kps";;
+		case 0x03: type ="GSM 13 kps";;
+		case 0x07: type ="LPC 2.4 kps";;
+		case 0x1F: type ="H.261";;
+		case 0x21: type ="MPEG2";;
+		}		
+
+		String        sequence =  Utils.ux(buf[2], buf[3]);
+		String       timestamp =  Utils.ux(buf[4], buf[5], buf[6], buf[7]);
+		String synchronization = Utils.ux(buf[8], buf[9], buf[10], buf[11]);
+
+		System.out.println("+ RTP {" + 
+			               "type:" +            type + "," +
+			           "sequence:" +        sequence + "," +
+				      "timestamp:" +       timestamp + "," +
+				"synchronization:" + synchronization +
+		"}");
+
 		printBuffer(buf, 12, 4);
 		printTransportPacket(buf, 12);
 
-		/*
-		 * Packet
-		 */
 		printBuffer(buf, 200, 4);
 		printTransportPacket(buf, 200);
 
-		/*
-		 * Packet
-		 */
 		printBuffer(buf, 388, 4);
 		printTransportPacket(buf, 388);
 
-		/*
-		 * Packet
-		 */
 		printBuffer(buf, 388, 4);
 		printTransportPacket(buf, 388);
 
-		/*
-		 * Packet
-		 */
 		printBuffer(buf, 388, 4);
 		printTransportPacket(buf, 388);
 
-		/*
-		 * Packet
-		 */
 		printBuffer(buf, 388, 4);
 		printTransportPacket(buf, 388);
 
-		/*
-		 * Packet
-		 */
 		printBuffer(buf, 388, 4);
 		printTransportPacket(buf, 388);
 	}
 
 	private void printTransportPacket(byte[] buf, int start) throws OutOfSyncException {
-		System.out.println("======= TS =======");
-		if(u(buf[0 + start]) == 0x47) {
-			System.out.println("Found: Sync");
-		} else {
-			System.out.println("ERROR");
-			throw new OutOfSyncException();
+		if(Utils.u(buf[0 + start]) != 0x47) {
+			throw new OutOfSyncException("Did not find 0x47 in TS");		
 		}
-		System.out.println("Found: PID " + String.format("0x%02X", u(buf[2 + start])));
-		System.out.println("Found: CC " + String.format("0x%02X", u(buf[4 + start])));
-		System.out.println();
-		
+
+		String pid = Utils.ux(buf[2 + start]);
+		String  cc = Utils.ux(buf[4 + start]);
+
+		System.out.println("  + TS {" +
+				"pid:" + pid + "," + 
+				 "cc:" +  cc + 
+		"}");
+
 		printBuffer(buf, start + 4, 184);
 		printPESPacket(buf, start + 4);
 	}
 
-	private void printPESPacket(byte[] buf, int start) throws OutOfSyncException {
-		System.out.println("======= PES =======");
-		System.out.println("Found: PES Packetstart " + u(buf[start], buf[start+1], buf[start+2]));
-		System.out.println("Found: PES ID " + u(buf[start + 3]));
-		System.out.println("Found: PES length " + u(buf[start + 4], buf[start + 5]));
-		System.out.println("Found: PES 10 " + u(buf[start + 6], buf[start + 7]));
+	private void printPESPacket(byte[] buf, int start) throws OutOfSyncException {		
+		String packetstart = Utils.ux(buf[start], buf[start+1], buf[start+2]);
+		String          id = Utils.ux(buf[start + 3]);
+		String      length = Utils.ux(buf[start + 4], buf[start + 5]);
+		String         ten = Utils.ux(buf[start + 6], buf[start + 7]);
+
+		System.out.println("    + PES{" +
+				"packetstart:" + packetstart + "," + 
+				         "id:" + id + "," + 
+				     "length:" + length + "," + 
+				        "ten:" + ten + 
+		"}");
 		System.out.println();
 	}
 
@@ -160,6 +284,8 @@ public class Main implements Runnable {
 
 
 	public static void main(String[] args) throws SocketException {
-		new Main(7910);
+		new Main(5004);
 	}
 }
+
+ */
