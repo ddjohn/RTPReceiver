@@ -1,3 +1,4 @@
+package rtp;
 
 public class OutOfSyncException extends Exception {
 	
