@@ -6,6 +6,8 @@ import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.SocketException;
+import java.util.ArrayList;
+import java.util.HashMap;
 
 import packets.PATPacket;
 import packets.PayloadOnlyPacket;
@@ -21,10 +23,14 @@ public class Main implements Runnable {
 	private DatagramSocket socket;
 	public static boolean DEBUG = false;
 
+	public HashMap<Integer, ArrayList<Byte>> map = new HashMap<Integer, ArrayList<Byte>>();
+	
 	public Main(int port) throws SocketException {
 		System.err.println("Starting UDP server at " + port);
 		socket = new DatagramSocket(port);
 
+		map.put(0x68, new ArrayList<Byte>());
+		
 		new Thread(this).start();
 	}
 
@@ -70,7 +76,7 @@ public class Main implements Runnable {
 			printTransportPacket(buf, 12+i*188);
 		}
 
-		throw new OutOfSyncException("END OF PACKAGE");
+		//throw new OutOfSyncException("END OF PACKAGE");
 	}
 
 	private void printTransportPacket(byte[] buf, int start) throws OutOfSyncException {
@@ -86,31 +92,34 @@ public class Main implements Runnable {
 		case 1: printCAT(buf, start+4); break;
 
 		default: {
-			//int  length = (int) Utils.u(buf[4 + start]);
 
 			//Utils.printBuffer(buf, start + 4, 184);
+
+			int cc = (int) bits(buf[3 + start], 0x0f, 0);
+			int length = (int) u(buf[4 + start]);
 
 			int control = (int) bits(buf[3 + start], 0x30, 4);
 			switch(control) {
 			case 0x01: printPayloadOnlyPacket(buf, start + 4); break;
-			case 0x02: printAdaptaionOnlyPacket(buf, start + 4); break;
-			case 0x03: printAdaptationPayloadPacket(buf, start + 4); break;
+			case 0x02: printAdaptaionOnlyPacket(length, buf, start + 4); break;
+			case 0x03: printAdaptationPayloadPacket(length, buf, start + 4); break;
 			default: printOtherPacket(buf, start + 4); break;
 			}	
 		}
 		}
 	}
 
-	private void printAdaptationPayloadPacket(byte[] buf, int start) {
-		System.out.println(new AdaptationPayloadPacket(buf, start));		
+	private void printAdaptationPayloadPacket(int length, byte[] buf, int start) {
+		System.out.println(new AdaptationPayloadPacket(length, buf, start));		
 	}
 
-	private void printAdaptaionOnlyPacket(byte[] buf, int start) {
-		System.out.println(new AdaptaionOnlyPacket(buf, start));		
+	private void printAdaptaionOnlyPacket(int length, byte[] buf, int start) {
+		System.out.println(new AdaptaionOnlyPacket(length, buf, start));
+		System.exit(0);
 	}
 
 	private void printPayloadOnlyPacket(byte[] buf, int start) {
-		System.out.println(new PayloadOnlyPacket(buf, start));		
+		System.out.println(new PayloadOnlyPacket(buf, start));
 	}
 
 	private void printPAT(byte[] buf, int start) {
